@@ -1,0 +1,95 @@
+---
+- name: Update all apt packages
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: true
+
+- name: Install tools
+  ansible.builtin.package:
+    name:
+      - python3-launchpadlib
+      - ssh-import-id
+      - curl
+      - net-tools
+      - htop
+      - unzip
+      - gnupg2
+      - unattended-upgrades
+    state: present
+
+- name: Create rbelgrave user
+  ansible.builtin.user:
+    name: rbelgrave
+    comment: Ryan Belgrave
+    create_home: true
+    password: "!"
+    password_lock: true
+    shell: "/bin/bash"
+    state: present
+
+- name: Set rbelgrave ssh authorized key
+  ansible.posix.authorized_key:
+    user: rbelgrave
+    key: https://launchpad.net/~rmb1993/+sshkeys
+    manage_dir: true
+    state: present
+
+- name: Add rbelgrav to sudoers
+  ansible.builtin.copy:
+    content: "rbelgrave    ALL=(ALL:ALL) NOPASSWD: ALL"
+    dest: /etc/sudoers.d/rbelgrave
+    mode: "0440"
+
+- name: Install Tailscale keyring
+  ansible.builtin.get_url:
+    url: https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.gpg
+    dest: /usr/share/keyrings/tailscale-archive-keyring.asc
+    checksum: sha256:53c6f7dfbd774839d9f37e6c5022ba952108aba9a0e556a56f292a9eb605d7cf
+    mode: "0644"
+
+- name: Add Tailscale repo
+  ansible.builtin.apt_repository:
+    repo: >
+      deb [arch=amd64 signed-by=/usr/share/keyrings/tailscale-archive-keyring.asc]
+      https://pkgs.tailscale.com/stable/ubuntu {{ ansible_distribution_release }} main
+    state: present
+
+- name: Install tailscale
+  ansible.builtin.package:
+    name: tailscale
+    state: present
+
+- name: Remove root authorized keys
+  ansible.builtin.file:
+    path: /root/.ssh/authorized_keys
+    state: absent
+
+- name: Update ssh.service unit file to generate ssh keys if not exists
+  ansible.builtin.template:
+    src: usr/lib/systemd/system/ssh.service
+    dest: /usr/lib/systemd/system/ssh.service
+    mode: "0644"
+
+- name: Remove host ssh keys
+  ansible.builtin.file:
+    path: "/etc/ssh/{{ item }}"
+    state: absent
+  with_items:
+    - ssh_host_ecdsa_key
+    - ssh_host_ecdsa_key.pub
+    - ssh_host_ed25519_key
+    - ssh_host_ed25519_key.pub
+    - ssh_host_rsa_key
+    - ssh_host_rsa_key.pub
+
+- name: Shutdown Container
+  ansible.builtin.command: /sbin/shutdown
+  changed_when: false
+
+- name: Wait for shutdown
+  ansible.builtin.wait_for:
+    host: "{{ inventory_hostname }}"
+    port: 22
+    state: stopped
+  become: false
+  delegate_to: localhost
